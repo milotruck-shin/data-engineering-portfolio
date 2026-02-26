@@ -3,9 +3,13 @@ import argparse
 import pandas as pd
 import numpy as np
 
-PAIR_WINDOW_MINUTES = 1  #pairing window for OPTO3~OPTO6 and outage matching
+PAIR_WINDOW_MINUTES = 5  #pairing window for OPTO3~OPTO6 and outage matching
 MIN_DURATION_MINUTES = 1
 MAX_DURATION_HOURS = 24
+
+#categorize Alarms using np.where (vectorised operation), pls use vector operations (numpy) whenever possible
+outage_alarms = ['CSL Fault', 'OML Fault', 'S1ap Link Down_NE Down', 'epsEnodebunreachable_NE Down']
+alarm_order = ["OPTO 3 Main Failure", "OPTO 6 Rectifier Failure", "Outage Alarm"]
 
 def parse_args():
     parser = argparse.ArgumentParser(
@@ -473,20 +477,43 @@ def calculate_dur(df : pd.DataFrame):
 
     return df
 
+def process_single_folder (input_folder:Path, output_file: Path):
+
+    try:
+        df=load_csv_folder(input_folder)
+    except FileNotFoundError:
+        print(f"[Skipped] No CSVs found in {input_folder.name}")
+        return
+    
+    df_opto, df_outage = preprocess(df,outage_alarms,alarm_order)
+    df_outage = normalise_outage_format(df_outage)
+    concat_df = concatenate_dfs(df_opto, df_outage)
+    final_df = match_all_sites(concat_df)
+    final_df = group_labelling(final_df)
+    final_df=calculate_dur(final_df)
+
+    # SAVE RESULT
+    final_df.to_csv(output_file,index=False)
+
+
+    print(final_df.head())
+    print("\nGroup counts:")
+    print(final_df["Group"].value_counts(dropna=False))
+
 
 ######################################################################################################
 
 if __name__=="__main__":
 
-    #categorize Alarms using np.where (vectorised operation), pls use vector operations (numpy) whenever possible
-    outage_alarms = ['CSL Fault', 'OML Fault', 'S1ap Link Down_NE Down', 'epsEnodebunreachable_NE Down']
-    alarm_order = ["OPTO 3 Main Failure", "OPTO 6 Rectifier Failure", "Outage Alarm"]
 
     args = parse_args()
     input_path = args.input_path
     if input_path.is_dir():
 
-        out_path = input_path.joinpath("result.csv")
+        folder_name = input_path.name
+
+        file_name = f"{folder_name}_results.csv"
+        out_path = input_path.joinpath(file_name)
 
         if out_path.exists():
             out_path.unlink()   # delete old result.csv
@@ -494,8 +521,9 @@ if __name__=="__main__":
         df = load_csv_folder(input_path)
 
     elif input_path.is_file():
+        file_stem = input_path.stem 
+        out_path = input_path.with_name(f"{file_stem}_results.csv")
         df = pd.read_csv(input_path)
-        out_path = input_path.with_name("result.csv")
 
     else:
         raise ValueError("Input path must be a file or directory")
@@ -514,3 +542,35 @@ if __name__=="__main__":
     print(final_df.head())
     print("\nGroup counts:")
     print(final_df["Group"].value_counts(dropna=False))
+
+"""
+if __name__ == "__main__":
+
+    args = parse_args()
+    root_path = args.input_path
+
+    if not root_path.exists():
+        raise ValueError("Path does not exist")
+
+    if root_path.is_dir():
+        
+        # 1. Create the "New Subfolder" for results
+        results_dir = root_path.joinpath("Processed_Results")
+        results_dir.mkdir(exist_ok=True) # Creates folder if it doesn't exist
+
+        # 2. Iterate through every item in the parent folder
+        for subfolder in root_path.iterdir():
+            
+            # Safety Check: Must be a directory, and NOT the results directory itself
+            if subfolder.is_dir() and subfolder != results_dir:
+                
+                # Define Output Name: "Jan2026_results.csv"
+                output_name = f"{subfolder.name}_results.csv"
+                output_path = results_dir.joinpath(output_name)
+                
+                # Run the logic
+                process_single_folder(subfolder, output_path)
+
+        print("\nAll folders processed.")
+        print(f"Results saved in: {results_dir}")
+"""
